@@ -1,0 +1,452 @@
+Description: "BD5 - Certificate Rotation - CloudFormation Template"
+Parameters:
+  pEmailAddress:
+    Description: "Email ID for SNS topic"
+    Type: String
+Resources:
+  rSNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Operations Defender Topic - Email
+  
+  rSNSEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref rSNSTopic
+      Endpoint: !Ref pEmailAddress
+      Protocol: email
+  
+  rSNSLambdaSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref rSNSTopic
+      Endpoint: !GetAtt rDemoIoTDevDefAuditActionLambdaFunction.Arn
+      Protocol: lambda
+  
+  rJobBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+
+  rDemoIoTDevDefenderRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSIoTDeviceDefenderAudit
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - sns.amazonaws.com
+                - iot.amazonaws.com
+
+  rDemoIoTDevDefenderPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: DemoIoTDevDefenderPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "iot:Publish"
+            Resource: "arn:aws:iot:*:*:topic/jobs/notify"
+          - Effect: Allow
+            Action:
+              - "iot:GetLoggingOptions"
+              - "iot:GetV2LoggingOptions"
+              - "iot:ListCACertificates"
+              - "iot:ListCertificates"
+              - "iot:DescribeCACertificate"
+              - "iot:DescribeCertificate"
+              - "iot:ListPolicies"
+              - "iot:GetPolicy"
+              - "iot:GetEffectivePolicies"
+              - "cognito-identity:GetIdentityPoolRoles"
+              - "iam:ListRolePolicies"
+              - "iam:ListAttachedRolePolicies"
+              - "iam:GetPolicy"
+              - "iam:GetPolicyVersion"
+              - "iam:GetRolePolicy"
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - "sns:Publish"
+            Resource:
+              - !Ref rSNSTopic
+          - Effect: Allow
+            Action:
+              - "iam:GetRole"
+              - "iam:GetPolicyVersion"
+              - "iam:GetPolicy"
+              - "iam:ListGroupPolicies"
+              - "iam:ListEntitiesForPolicy"
+              - "iam:GetGroup"
+              - "iam:GetContextKeysForPrincipalPolicy"
+              - "iam:ListInstanceProfilesForRole"
+              - "iam:GetServiceLinkedRoleDeletionStatus"
+              - "iam:SimulatePrincipalPolicy"
+              - "iam:ListPolicyVersions"
+              - "iam:ListAttachedRolePolicies"
+              - "iam:ListAttachedGroupPolicies"
+              - "iam:GetGroupPolicy"
+              - "iam:ListRolePolicies"
+              - "iam:GetRolePolicy"
+            Resource:
+              - "arn:aws:iam::*:policy/*"
+              - "arn:aws:iam::*:role/*"
+              - "arn:aws:iam::*:group/*"
+      Roles:
+        - !Ref rDemoIoTDevDefenderRole
+
+  rDemoIoTDevDefenderLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSIoTDeviceDefenderAudit
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - iot.amazonaws.com
+
+  rDemoIoTDevDefenderLambdaPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: DemoIoTDevDefenderLambdaPolicy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Action:
+              - "s3:GetObject"
+              - "logs:CreateLogStream"
+              - "logs:PutLogEvents"
+            Resource:
+              - "arn:aws:logs:*:*:*"
+              - !Sub "${rJobBucket.Arn}/*.*"
+            Effect: Allow
+          - Action:
+              - "iot:CreateJob"
+              - "iot:AttachPolicy"
+              - "iot:AttachThingPrincipal"
+              - "iot:ListJobExecutionsForJob"
+              - "iot:ListJobs"
+              - "iot:DescribeJob"
+              - "iot:DescribeJobExecution"
+              - "iot:ListJobExecutionsForThing"
+              - "iot:CreateCertificateFromCsr"
+              - "iot:Publish"
+              - "iot:ListAuditFindings"
+              - "iot:ListPrincipalThings"
+              - "iot:DescribeCertificate"
+              - "iot:DescribeThing"
+              - "iot:ListThingPrincipals"
+              - "iot:UpdateCertificate"
+              - "iot:ListAttachedPolicies"
+              - "iot:DetachPrincipalPolicy"
+              - "iot:DeleteCertificate"
+              - "iot:DetachThingPrincipal"
+            Resource: "*"
+            Effect: Allow
+          - Action: "logs:CreateLogGroup"
+            Resource: "arn:aws:logs:*:*:*"
+            Effect: Allow
+      Roles:
+        - !Ref rDemoIoTDevDefenderLambdaRole
+
+  rDemoIoTDevDefAuditActionLambdaFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: Jumpstart Defender Lambda Function
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: 60
+      Environment:
+        Variables:
+          Device_Job_Document_Bucket: !Sub https://s3.${AWS::Region}.amazonaws.com/${rJobBucket}
+      Role: !GetAtt rDemoIoTDevDefenderLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import uuid
+          import json
+          import os
+
+          client = boto3.client('iot')
+          myDeviceJobDocument_DEVICE_CERTIFICATE_EXPIRING_CHECK = os.environ['Device_Job_Document_Bucket'] + "/certRotateJob.json"
+
+          def reconcileList (myStatus, myJobContext, myThings):
+              global client
+              filteredThings = myThings.copy()
+
+              for thingARN, thingName in myThings.items():
+                  #check if a pending job exists for a device
+                  joblist_response = client.list_job_executions_for_thing(
+                      thingName=thingName,
+                      status=myStatus,
+                      maxResults=100
+                  )
+
+                  #check if the job is for this context
+                  for job in joblist_response['executionSummaries']:
+                      jobdesc_response = client.describe_job(
+                          jobId=job['jobId']
+                      )
+                      print ('jobdesc: ' + jobdesc_response['job']['description'])
+                      if jobdesc_response['job']['description'] == myJobContext:
+                          if thingARN in filteredThings: del filteredThings[thingARN]
+
+              return filteredThings
+
+          def lambda_handler(event, context):
+              global client
+              myThings = {}
+              myDict = json.loads(event["Records"][0]["Sns"]["Message"])
+
+              # filter for actionable check violations
+              for audit in myDict["auditDetails"]:
+                  if audit["checkName"] == "DEVICE_CERTIFICATE_EXPIRING_CHECK":
+
+                      # get list of impacted items - referenced by arn
+                      myJobContext = audit["checkName"]
+                      print(myDict)
+                      #initialize the list with all impacted things
+                      auditResults = client.list_audit_findings(
+                          taskId=myDict["taskId"],
+                          checkName=audit["checkName"]
+                      )
+
+                      for finding in auditResults["findings"]:
+                          myExpiringCert = finding["nonCompliantResource"]["resourceIdentifier"]["deviceCertificateId"]
+
+                          #get the ARN for the certificate
+                          certDescResponse = client.describe_certificate(
+                              certificateId=myExpiringCert
+                          )
+
+                          #get things for this cert
+                          thingsResp = client.list_principal_things(
+                              maxResults=100,
+                              principal=certDescResponse["certificateDescription"]["certificateArn"]
+                          )
+
+                          #append things to the dictionary
+                          for thing in thingsResp["things"]:
+                              thingDescResponse = client.describe_thing(
+                                  thingName=thing
+                              )
+                              myThings[thingDescResponse["thingArn"]] = thing
+
+                      #remove things from the target list that already have the same type of job queued or in progress
+                      myThings = reconcileList ('QUEUED', myJobContext, myThings)
+                      myThings = reconcileList ('IN_PROGRESS', myJobContext, myThings)
+
+                      # submit device job if there are any targets left in the list
+                      print (len(myThings))
+                      if len(myThings) > 0:
+                          myJobId = str(uuid.uuid4())
+                          print ('myJobId: ' + myJobId)
+                          response = client.create_job(
+                              jobId=myJobId,
+                              targets=[",".join(myThings.keys())],
+                              documentSource=myDeviceJobDocument_DEVICE_CERTIFICATE_EXPIRING_CHECK,
+                              description=myJobContext
+                          )
+
+              return 'done'
+
+  rLambdaTopicPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: sns.amazonaws.com
+      SourceArn: !Ref rSNSTopic
+      FunctionName: !GetAtt rDemoIoTDevDefAuditActionLambdaFunction.Arn
+
+  rDemoIoTDevDefRotateCertLambdaFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: Jumpstart Defender Lambda Function to issue new certificate
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: 60
+      Role: !GetAtt rDemoIoTDevDefenderLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import json
+
+          client = boto3.client('iot')
+          data_client = boto3.client('iot-data')
+
+          def lambda_handler(event, context):
+              #print(event)
+
+              if "packageName" in event:
+                  if event["packageName"] == "DEVICE_CERTIFICATE_EXPIRING_CHECK":
+                      myThingName = event["ThingName"]
+                      cert_response = client.create_certificate_from_csr(
+                          certificateSigningRequest = event["csr"],
+                          setAsActive=True
+                      )
+
+                      myCertResponse = {}
+                      myCertResponse["JobId"] = event["JobId"]
+                      myCertResponse["certificateArn"] = cert_response["certificateArn"]
+                      myCertResponse["certificateId"] = cert_response["certificateId"]
+                      myCertResponse["certificatePem"] = cert_response["certificatePem"]
+                      print (cert_response["certificateArn"])
+
+                      #attach policy to certificate
+                      response = client.attach_policy(
+                          policyName='LabIoTDevicePolicy',
+                          target=cert_response["certificateArn"]
+                      )
+
+                      #attach thing/device to this certificate
+                      response = client.attach_thing_principal(
+                          thingName=myThingName,
+                          principal=cert_response["certificateArn"]
+                      )
+
+                      #send the new certificate back to the device
+                      data_client.publish(
+                          topic="res/"+ myThingName +"/jobs/",
+                          qos=0,
+                          payload=json.dumps(myCertResponse)
+                      )
+
+              return 'Done'
+
+  rDemoIoTDevDefRotateCertRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: DemoIoTDevDefJobsRotateCertificateRule
+      TopicRulePayload:
+        RuleDisabled: false
+        Sql: SELECT * FROM 'req/+/jobs/rotateCert'
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt rDemoIoTDevDefRotateCertLambdaFunction.Arn
+
+  rDemoIoTDevDefRotateCertLambdaFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      FunctionName: !GetAtt rDemoIoTDevDefRotateCertLambdaFunction.Arn
+
+  rDemoIoTDevDefRevokeCertLambdaFunction:
+    Type: "AWS::Lambda::Function"
+    Properties:
+      Description: Jumpstart Defender Lambda Function to revoke certificate
+      Handler: index.lambda_handler
+      Runtime: python3.7
+      Timeout: 60
+      Role: !GetAtt rDemoIoTDevDefenderLambdaRole.Arn
+      Code:
+        ZipFile: |
+          import boto3
+          import re
+          client = boto3.client('iot')
+
+          def lambda_handler(event, context):
+
+              #get list of certs for this thing
+              certsResponse = client.list_thing_principals(
+                  thingName = event["ThingName"]
+              )
+
+              #revoke and delete all certs associated with this thing except for the new one
+              for certARN in certsResponse["principals"]:
+                  if certARN != event["certificateArn"]:
+                      #get cert id
+                      base,certificateId = certARN.split("/")
+
+                      #check its status
+                      statusResponse = client.describe_certificate(
+                          certificateId = certificateId
+                      )
+
+                      if statusResponse["certificateDescription"]["status"] != "REVOKED":
+                          #revoke the certificate
+                          updateCertResponse = client.update_certificate(
+                              certificateId = certificateId,
+                              newStatus = 'REVOKED'
+                          )
+                          print("Revoked cert: " + certificateId)
+
+                          #list the policies for the cert so they can be detached
+                          policiesResponse = client.list_attached_policies(
+                              target=certARN,
+                              recursive=False
+                          )
+
+                          #remove the attachement
+                          for policy in policiesResponse["policies"]:
+                              response = client.detach_principal_policy(
+                                  policyName=policy["policyName"],
+                                  principal=certARN
+                              )
+                              print("Detached policy: " + policy["policyName"])
+
+                          #detach the cert from the thing
+                          response = client.detach_thing_principal(
+                              thingName=event["ThingName"],
+                              principal=certARN
+                          )
+
+                          #delete the certificate
+                          response = client.delete_certificate(
+                              certificateId=certificateId,
+                              forceDelete=False
+                          )
+                          print("Delete cert: " + certificateId)
+
+              return 'Done'
+  
+  rDemoIoTDevDefRevokeCertRule:
+    Type: AWS::IoT::TopicRule
+    Properties:
+      RuleName: DemoIoTDevDefJobsRevokeCertificateRule
+      TopicRulePayload:
+        RuleDisabled: false
+        Sql: SELECT * FROM 'req/+/jobs/revokeCert'
+        Actions:
+          - Lambda:
+              FunctionArn: !GetAtt rDemoIoTDevDefRevokeCertLambdaFunction.Arn
+
+  rDemoIoTDevDefRevokeCertLambdaFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      FunctionName: !GetAtt rDemoIoTDevDefRevokeCertLambdaFunction.Arn
+
+Outputs:
+  JobBucketName:
+    Description: Name of the Job S3 Bucket 
+    Value: !Ref rJobBucket
+  DeviceDefenderRole:
+    Description: Name of IAM Role used by AWS IoT Device Defender on your behalf
+    Value: !Ref rDemoIoTDevDefenderRole
